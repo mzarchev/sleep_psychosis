@@ -1,0 +1,61 @@
+---
+title: "Power analysis"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(WebPower)
+```
+
+### Minimum effect size detectable with full sample
+
+```{r}
+wp.correlation(n = 640, r = NULL, power = .8, alpha = 0.0125, p = 4)
+
+seq(440, 640, 20)
+
+```
+### Minimum effect size detectable with a partial sample (25% missing)
+
+```{r}
+wp.correlation(n = 480, r = NULL, power = .8, alpha = 0.0125, p = 4)
+```
+In both cases, a small effect size is detectable (r 0.13 - 0.15)
+
+### Power curve
+
+```{r}
+get_power <- function(eff_size){
+
+  wp_obj <- wp.correlation(n = seq(440, 640, 20), r = eff_size, power = NULL, alpha = 0.0125, p = 4)
+
+  bind_cols(n = wp_obj$n, power = wp_obj$power)
+}
+
+power_df <-
+tibble(r = seq(0.1, 0.2, 0.01)) %>% 
+  mutate(power = map(r, get_power)) %>% 
+  unnest(power) %>% 
+  mutate(power_dicht = case_when(power >= 0.8 ~ "> 80%",
+                                 power >= 0.7 & power < 0.8 ~ "> 70%",
+                                 TRUE ~ "< 70%"))
+  
+power_df %>% 
+  ggplot(aes(x = r, y = n, fill = power)) +
+  geom_tile() +
+  geom_tile(data = power_df %>% filter(power >= 0.8),
+            color = "midnightblue") +
+  geom_tile(data = power_df %>% filter(power >= 0.7 & power < 0.8),
+            color = "gray") +
+  labs(x = "Pearson's (partial) r", y = "Sample size", fill = "Power\n") +
+  scale_fill_continuous(breaks = seq(0.2, 1, 0.2),
+                        limits = c(0.2, 1),
+                        labels = scales::percent) +
+  theme_light() +
+  theme(panel.grid = element_blank(),
+        aspect.ratio = .75)
+
+ggsave("plots/power_analysis.png", scale = 2)
+```
+
