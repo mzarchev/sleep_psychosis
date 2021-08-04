@@ -1,0 +1,113 @@
+---
+title: "Simulate data"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(simstudy)
+
+set.seed(2021)
+```
+
+In this script, I will take the descriptives from Koopman et al. 2019 
+
+(https://www-sciencedirect-com.eur.idm.oclc.org/science/article/pii/S0920996418306911)
+
+to generate a fake dataset, on top of which the analysis script for the current project
+will be preconstructed.
+
+In the final analysis, this section will consist of loading the data and selecting the relevant variables.
+
+### Generate each of the variables used in the analysis
+
+```{r}
+n <- 1000
+
+# Simulate responses for three YSR items
+sim_ysr <-
+  tibble(id = rep(as.character(1:n), each = 3),
+         col_names = rep(paste0("ysr_", 1:3), n),
+         response  = sample(c(0, 1, 2),
+                            size = n*3, replace = T, prob = c(.8, .14, .06))) %>% 
+  pivot_wider(names_from = col_names, values_from = response)
+
+# Simulate responses for PQ-16 items
+sim_pq <-
+  tibble(id = rep(as.character(1:n), each = 16),
+         col_names = rep(paste0("pq_", 1:16), n),
+         response  = rbinom(n*16, size = 1, prob = .15)) %>% 
+  pivot_wider(names_from = col_names, values_from = response)
+
+# Simulate responses for 8 subjective sleep questionnaire items
+sim_sleep <-
+  tibble(id = rep(as.character(1:n), each = 8),
+         col_names = rep(paste0("sleep_", 1:8), n),
+         response  = sample(c(0, 1, 2, 3, 4), size = n*8, replace = T,
+                            prob = c(0.35, 0.3, 0.15, 0.12, 0.08))) %>% 
+  pivot_wider(names_from = col_names, values_from = response)
+ 
+# Simulate the rest of the variables and combine in a full dataframe
+sim_df <-
+  tibble(
+  id = as.character(1:n),
+  # Covariates
+  age = rnorm(n, mean = 16, sd = 2),
+  sex = sample(c("male", "female"), size = n, replace = T, prob = c(.5, .5)),
+  ethnicity = sample(c("dutch", "other western", "non-western"),
+                     size = n, replace = T, prob = c(.85, .055, .095)),
+  mom_educt = sample(c("no education", "high school", "higher education"),
+                     size = n, replace = T, prob = c(0.18, .321, .661)),
+  mom_depr = truncnorm::rtruncnorm(n, mean = 0.2, sd = 0.4, a = 0),
+  # Outcomes
+  # subj_sleep = rnorm(n, mean = 11, sd = 2.5),
+  duration_sleep = rnorm(n, 8, 0.51),
+  efficiency_sleep = rnorm(n, 82.3, 5.2),
+  arousal_sleep = rnorm(n, 24.3, 3.3), 
+  social_jetlag = rnorm(n, 0.75, 1.01)) %>% 
+  # Item-level predictors (to be summed later)
+  left_join(sim_ysr, by = "id") %>% 
+  left_join(sim_pq, by = "id") %>% 
+  left_join(sim_sleep, by = "id") %>% 
+  # Configure higher education as the ref category in mother's education variable
+  mutate(mom_educt = fct_relevel(mom_educt, "higher education"))
+
+```
+
+### Simulate missing data
+
+```{r}
+# Which variables should have missing data
+vars_miss <- c("ethnicity", "mom_depr", paste0("sleep_", 1:8),
+               paste0("pq_", 1:16), paste0("ysr_", 1:3))
+
+# simulate some missing data with 5% probability (default of ampute)
+sim_miss <-
+  sim_df %>% 
+  select(vars_miss) %>% 
+  mice::ampute(mech = "MCAR")
+
+# Add some completely missing questionnaires/actiwatch data
+missing_df <-
+  sim_df %>% 
+  select(-vars_miss) %>% 
+  bind_cols(sim_miss$amp) %>% 
+  mutate(actiwatch_miss = rbinom(1000, size = 1, prob = 0.05),
+         questionnaire_miss = rbinom(1000, size = 1, prob = 0.05),
+         pq_miss = rbinom(1000, size = 1, prob = 0.05),
+         across(sleep_1:sleep_8,
+                ~ifelse(questionnaire_miss == 1, NA, .)),
+         across(pq_1:pq_16,
+                ~ifelse(pq_miss == 1, NA, .)),
+         across(duration_sleep:social_jetlag,
+                ~ifelse(actiwatch_miss == 1, NA, .))) %>% 
+  select(-ends_with("miss"))
+
+```
+
+### Save simulated data 
+
+```{r}
+write_csv(missing_df, "sim_data.csv")
+```
+

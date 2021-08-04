@@ -1,0 +1,121 @@
+---
+title: "Reliability"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(semTools)
+```
+## Read in data
+
+```{r}
+tidy_df <- read_csv("sim_data.csv")
+```
+
+## Create dataframe strucutre with nested subscales 
+
+```{r}
+subscales_df <- 
+ tidy_df %>% 
+ select(id, matches("^ysr|^pq|^sleep")) %>% 
+ pivot_longer(-id) %>% 
+ mutate(scale = str_extract(name, "...")) %>% 
+ group_by(scale) %>% 
+ nest()
+
+subscales_df
+```
+
+## Function to obtain omega and model fit indices
+
+```{r}
+
+get_omega <- function(df){
+
+ df <- 
+  df %>% 
+  pivot_wider(names_from = name, values_from = value) %>% 
+  select(-id)
+
+ items <-
+  colnames(df) %>% 
+  paste(collapse = " + ")
+
+ model_formula <- paste0('factor =~ ', items)
+ 
+ model_fit <- cfa(
+    model_formula,
+    data = df,
+    std.lv = T,
+    ordered = T,
+    estimator = "WLSMV"
+  )
+ 
+ fit_indices <-
+    summary(model_fit, fit.measures = T)$FIT %>%
+    as_tibble(rownames = "index") %>%
+    mutate(value = round(value, 3)) %>%
+    filter(index %in% c("rmsea", "rmsea.ci.lower", "rmsea.ci.upper",
+                        "cfi", "pvalue")) %>%
+    pivot_wider(values_from = "value", names_from = "index")
+ 
+ omega_ci <-
+    MBESS::ci.reliability(
+      data = df,
+      type = "categorical",
+      interval.type = "perc",
+      B = 50 # Should be more, but careful with computation time
+    ) %>%
+    reshape2::melt() %>%
+    as_tibble() %>%
+    filter(L1 == "ci.lower" | L1 == "ci.upper" | L1 == "est") %>%
+    pivot_wider(values_from = "value", names_from = "L1")
+  
+  result <- tibble(omega_ci, fit_indices)
+  }
+```
+
+### Compute omega and fit indices
+
+```{r}
+reliability_df <-
+  subscales_df %>% 
+  transmute(scale = case_when(scale == "pq_" ~ "PQ-16",
+                              scale == "sle" ~ "Subjective sleep",
+                              scale == "ysr" ~ "YSR"),
+            reliability = map(data, get_omega)) %>% 
+  unnest(reliability) %>% 
+  ungroup()
+
+reliability_df
+```
+
+### Create a table
+
+```{r}
+## Convenience function
+round_trail <- function(string) sprintf("%.2f", round(string, 2))
+
+reliability_tbl <-
+  reliability_df %>%
+  ungroup() %>% 
+  mutate(across(-scale, as.numeric),
+         across(-c(scale, pvalue), round_trail),
+         cat_omega = paste0(est, " [", ci.lower,
+                            ", ", ci.upper, "]"),
+         rmsea = paste0(rmsea, " [", rmsea.ci.lower,
+                        ", ", rmsea.ci.upper, "]")) %>% 
+  select(scale, cat_omega, rmsea, cfi, pvalue) %>% 
+  
+  gt(rowname_col = "scale") %>% 
+  cols_label(cat_omega = paste("Categorical", greekLetters::greeks("omega"), "[95%CI]"),
+             cfi = "CFI",
+             rmsea = "RMSEA",
+             pvalue = paste(greekLetters::greeks("chi^2"), "p-value")) %>%
+  tab_spanner(columns = vars(cfi, rmsea, pvalue), label = "Fit indices") %>% 
+  tab_header("Reliability measures obtained from confirmitory factor analysis and corresponding fit indices")
+
+gtsave(reliability_tbl, "reliability_tbl.html")  
+```
+
