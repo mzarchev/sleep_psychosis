@@ -35,13 +35,30 @@ In the final analysis, this section will consist of loading the data and selecti
 ```{r}
 n <- 1000
 
-sim_item <-
-  tibble(id = rep(as.character(1:n), each = 19),
-         col_names = rep(c(paste0("pq_", 1:16), paste0("ysr_", 1:3)), n),
+# Simulate responses for three YSR items
+sim_ysr <-
+  tibble(id = rep(as.character(1:n), each = 3),
+         col_names = rep(paste0("ysr_", 1:3), n),
          response  = sample(c(0, 1, 2),
-                            size = n*19, replace = T, prob = c(.8, .14, .06))) %>% 
+                            size = n*3, replace = T, prob = c(.8, .14, .06))) %>% 
+  pivot_wider(names_from = col_names, values_from = response)
+
+# Simulate responses for PQ-16 items
+sim_pq <-
+  tibble(id = rep(as.character(1:n), each = 16),
+         col_names = rep(paste0("pq_", 1:16), n),
+         response  = rbinom(n*16, size = 1, prob = .15)) %>% 
+  pivot_wider(names_from = col_names, values_from = response)
+
+# Simulate responses for 8 subjective sleep questionnaire items
+sim_sleep <-
+  tibble(id = rep(as.character(1:n), each = 8),
+         col_names = rep(paste0("sleep_", 1:8), n),
+         response  = sample(c(0, 1, 2, 3, 4), size = n*8, replace = T,
+                            prob = c(0.35, 0.3, 0.15, 0.12, 0.08))) %>% 
   pivot_wider(names_from = col_names, values_from = response)
  
+# Simulate the rest of the variables and combine in a full dataframe
 sim_df <-
   tibble(
   id = as.character(1:n),
@@ -54,13 +71,15 @@ sim_df <-
                      size = n, replace = T, prob = c(0.18, .321, .661)),
   mom_depr = truncnorm::rtruncnorm(n, mean = 0.2, sd = 0.4, a = 0),
   # Outcomes
-  subj_sleep = rnorm(n, mean = 11, sd = 2.5),
+  # subj_sleep = rnorm(n, mean = 11, sd = 2.5),
   duration_sleep = rnorm(n, 8, 0.51),
   efficiency_sleep = rnorm(n, 82.3, 5.2),
   arousal_sleep = rnorm(n, 24.3, 3.3), 
   social_jetlag = rnorm(n, 0.75, 1.01)) %>% 
   # Item-level predictors (to be summed later)
-  left_join(sim_item, by = "id") %>% 
+  left_join(sim_ysr, by = "id") %>% 
+  left_join(sim_pq, by = "id") %>% 
+  left_join(sim_sleep, by = "id") %>% 
   # Configure higher education as the ref category in mother's education variable
   mutate(mom_educt = fct_relevel(mom_educt, "higher education"))
 
@@ -70,7 +89,7 @@ sim_df <-
 
 ```{r}
 # Which variables should have missing data
-vars_miss <- c("ethnicity", "mom_depr", "subj_sleep",
+vars_miss <- c("ethnicity", "mom_depr", paste0("sleep_", 1:8),
                paste0("pq_", 1:16), paste0("ysr_", 1:3))
 
 # simulate some missing data with 5% probability (default of ampute)
@@ -87,7 +106,7 @@ missing_df <-
   mutate(actiwatch_miss = rbinom(1000, size = 1, prob = 0.05),
          questionnaire_miss = rbinom(1000, size = 1, prob = 0.05),
          pq_miss = rbinom(1000, size = 1, prob = 0.05),
-         across(subj_sleep,
+         across(sleep_1:sleep_8,
                 ~ifelse(questionnaire_miss == 1, NA, .)),
          across(pq_1:pq_16,
                 ~ifelse(pq_miss == 1, NA, .)),
@@ -100,16 +119,24 @@ missing_df <-
 ## Demographics table
 
 ```{r}
-
-missing_df %>% 
-  mutate(psychotic_pq_sum = pq_1 + pq_2 + pq_3 + pq_4 + pq_5 + pq_6 + pq_7 + pq_8 +
-                  pq_9 + pq_10 + pq_11 + pq_12 + pq_13 + pq_14 + pq_15 + pq_16,
+# Convenience fucntion for summing items before imputation
+sum_vars <- function(df){
+  df %>% 
+   mutate(psychotic_pq_sum = pq_1 + pq_2 + pq_3 + pq_4 + pq_5 + pq_6 + pq_7 + pq_8 +
+                             pq_9 + pq_10 + pq_11 + pq_12 + pq_13 + pq_14 + pq_15 + pq_16,
          psychotic_ysr_sum = ysr_1 + ysr_2 + ysr_3,
          psychotic_ysr_dicht = case_when(psychotic_ysr_sum == 0 ~ "None",
                                psychotic_ysr_sum >= 1 & psychotic_ysr_sum <= 3 ~ "Some",
                                psychotic_ysr_sum > 3 ~ "Several"),
-         mom_educt = as.character(mom_educt)) %>% 
-  select(-c(id, psychotic_ysr_sum, pq_1:pq_16, ysr_1:ysr_3)) %>% 
+         subj_sleep = sleep_1 + sleep_2 + sleep_3 + sleep_4 + 
+                      sleep_5 + sleep_6 + sleep_7 + sleep_8,
+         mom_educt = as.character(mom_educt))
+}
+
+
+missing_df %>% 
+  sum_vars() %>% 
+  select(-c(id, psychotic_ysr_sum, pq_1:pq_16, ysr_1:ysr_3, sleep_1:sleep_8)) %>% 
   select(age, sex, ethnicity, mom_educt, mom_depr, psychotic_pq_sum, psychotic_ysr_dicht, everything()) %>% 
   rename_with(~str_replace(., "_", " ") %>% 
                str_to_title %>% 
@@ -119,8 +146,10 @@ missing_df %>%
                ifelse(str_detect(., "Subj"), "Self-reported sleep", .) %>% 
                ifelse(str_detect(., "Pq_sum"), "Psychotic symptoms (PQ)", .) %>% 
                ifelse(str_detect(., "dicht"), "Psychotic symptoms (YSR)", .)) %>% 
-  mutate(across(where(is.character), ~map_chr(., str_to_sentence))) %>% 
-
+  mutate(across(where(is.character), ~map_chr(., str_to_sentence)),
+         ## Table summary is treating this var as categorical, added miniscule noise to fix
+         `Psychotic symptoms (PQ)` = map_dbl(`Psychotic symptoms (PQ)`, ~. + rnorm(1, 0.0001, sd = 0.001))) %>% 
+  
   tbl_summary(statistic = list(all_continuous() ~ "{mean} ({sd})"))
 ```
 
@@ -131,17 +160,22 @@ missing_df %>%
 
 ```{r}
 missing_df %>% 
+  sum_vars %>% 
   summarise_all(~mean(is.na(.))) %>% 
   pivot_longer(everything()) %>% 
   filter(value != 0) %>% 
   mutate(name = str_replace(name, "_", " ") %>% 
-                str_to_upper) %>% 
+                str_to_upper,
+         var_group = str_extract(name, "...")) %>% 
   
-  ggplot(aes(x = value, y = reorder(name,value), 
+  ggplot(aes(x = value, 
+             y = tidytext::reorder_within(name,value, var_group), 
              fill = -value, col = -value)) +
   geom_col(width = 1) +
-  geom_text(aes(label = paste0(round(value*100, 1), "%")), nudge_x = .003) +
+  geom_text(aes(label = paste0(round(value*100, 1), "%")),
+            nudge_x = .015, size = 3) +
   scale_x_continuous(labels = scales::percent) +
+  tidytext::scale_y_reordered() +
   labs(x = "Percent missing", y = "Variable") +
   theme_bw() +
   theme(panel.grid = element_blank(),
@@ -157,32 +191,30 @@ non_response_df <-
   # Sum up number of missing items per instrument
   rowwise() %>% 
   mutate(sum_pq = sum(c_across(pq_1_miss:pq_16_miss)),
+         sum_sleep = sum(c_across(sleep_1_miss:sleep_8_miss)),
          sum_actiwatch = sum(c_across(duration_sleep_miss:arousal_sleep_miss))) %>% 
   ungroup() %>% 
   select(-ends_with("miss")) %>% 
   # Dichotomize to either missing or not missing
   mutate(miss_pq = ifelse(sum_pq == 0, "Missing PQ", "Not missing"),
          miss_actiwatch = ifelse(sum_actiwatch == 0, "Missing Actiwatch", "Not missing"),
-         miss_subj_sleep = ifelse(is.na(subj_sleep), "Missing Sleep Self-report", "Not missing"),
-         miss_all = ifelse(sum_pq == 0 | sum_actiwatch == 0 | is.na(subj_sleep),
+         miss_subj_sleep = ifelse(sum_sleep == 0, "Missing Sleep Self-report", "Not missing"),
+         miss_all = ifelse(sum_pq == 0 | sum_actiwatch == 0 | sum_sleep == 0,
                            "Some missing", "Complete")) %>% 
   pivot_longer(miss_pq:miss_all, values_to = "which_missing") %>%
   # Filter out categories not of interest
   filter(which_missing != "Not missing",
          which_missing != "Some missing") %>% 
   # Add sum scores for non-response analysis
-  mutate(psychotic_pq_sum = pq_1 + pq_2 + pq_3 + pq_4 + pq_5 + pq_6 + pq_7 + pq_8 +
-                  pq_9 + pq_10 + pq_11 + pq_12 + pq_13 + pq_14 + pq_15 + pq_16,
-         psychotic_ysr_sum = ysr_1 + ysr_2 + ysr_3,
-         psychotic_ysr_dicht = case_when(psychotic_ysr_sum == 0 ~ "none",
-                               psychotic_ysr_sum >= 1 & psychotic_ysr_sum <= 3 ~ "some",
-                               psychotic_ysr_sum > 3 ~ "several")) %>% 
+  sum_vars() %>%  
   # Select variables for non-response analysis
   select(age, sex, ethnicity, mom_educt, mom_depr, psychotic_pq_sum, psychotic_ysr_dicht,
-         duration_sleep:arousal_sleep, which_missing) 
+         duration_sleep:arousal_sleep, subj_sleep, which_missing) 
   
 non_response_df %>% 
-  mutate(mom_educt = as.character(mom_educt)) %>% 
+  mutate(mom_educt = as.character(mom_educt),
+         across(where(is.character), ~map_chr(., str_to_sentence)),
+         psychotic_pq_sum = map_dbl(psychotic_pq_sum, ~. + rnorm(1, 0.0001, sd = 0.001))) %>% 
   rename_with(~str_replace(., "_", " ") %>% 
                str_to_title %>% 
                ifelse(str_detect(., "sleep"), paste("Sleep" ,str_remove(., "sleep")), .) %>%
@@ -191,7 +223,6 @@ non_response_df %>%
                ifelse(str_detect(., "Subj"), "Self-reported sleep", .) %>% 
                ifelse(str_detect(., "Pq_sum"), "Psychotic symptoms (PQ)", .) %>% 
                ifelse(str_detect(., "dicht"), "Psychotic symptoms (YSR)", .)) %>% 
-  mutate(across(where(is.character), ~map_chr(., str_to_sentence))) %>% 
   tbl_summary(by = "Which Missing", missing_text = "-") %>% 
   add_p()
 
@@ -231,19 +262,24 @@ plot(mice_obj)
 Still following what Koopman et al. reported:
 
 1. Sum and dichotomize psychotic experiences
-2. Square root transform self-reported sleep problems
+2. Sum PQ items
+3  Sum self-reported sleep problems
+3. Square root transform self-reported sleep problems
 
 
 ```{r}
 imputed_df <-
   mice_long %>% 
-  mutate(subj_sleep_sqrt = sqrt(subj_sleep + 0.0001),
+  mutate(subj_sleep = sleep_1 + sleep_2 + sleep_3 + sleep_4 + 
+                      sleep_5 + sleep_6 + sleep_7 + sleep_8,
+         subj_sleep_sqrt = sqrt(subj_sleep + 0.0001),
          psychotic_pq_sum = pq_1 + pq_2 + pq_3 + pq_4 + pq_5 + pq_6 + pq_7 + pq_8 +
                   pq_9 + pq_10 + pq_11 + pq_12 + pq_13 + pq_14 + pq_15 + pq_16,
          psychotic_ysr_sum = ysr_1 + ysr_2 + ysr_3,
          psychotic_ysr_dicht = case_when(psychotic_ysr_sum == 0 ~ "none",
                                psychotic_ysr_sum >= 1 & psychotic_ysr_sum <= 3 ~ "some",
                                psychotic_ysr_sum > 3 ~ "several")) %>% 
+  
   as.mids()
 ```
 
@@ -260,8 +296,24 @@ dist_df <-
   mutate(name = str_replace(name, "_", " ") %>% 
                 str_to_title,
          median = median(value),
-         mean = mean(value))
-dist_df %>% 
+         mean = mean(value),
+         var_str   = str_extract(name, "..."),
+         var_group = ifelse(str_detect(var_str,"Pq") |
+                            var_str == "Ysr" |
+                            var_str == "Sle",
+                            "item", "subscale")) %>% 
+  ungroup()
+
+# To plot subscale distributions before item distributions
+item_names <-
+  dist_df %>% 
+  filter(var_group == "subscale") %>% 
+  distinct(name) %>% 
+  pull()
+
+dist_df %>%
+  mutate(name = fct_relevel(name, item_names)) %>%
+  
   ggplot(aes(x = value)) +
   geom_histogram(fill = "#37718E") +
   labs(x = "", y = "") +
@@ -691,15 +743,15 @@ adjusted_coeffs %>%
   cols_label(parameter = "Coefficient",
              coefficient = "Estimate",
              ci = "95% CI",
-             p = "p-value") %>% 
+             p = "p-value") %>%
   tab_footnote("Reference category for Mother's Education = Higher Education",
-               location = cells_body(columns = parameter,
+               location = cells_body(columns = vars(parameter),
                                      rows = str_detect(parameter, "Education"))) %>% 
   tab_footnote("Reference category for Ethnicity = Western",
-               location = cells_body(columns = parameter,
+               location = cells_body(columns = vars(parameter),
                                      rows = str_detect(parameter, "Ethnicity"))) %>% 
   tab_footnote("Reference category for YSR Psychotic Experiences = No symptoms",
-               location = cells_body(columns = parameter,
+               location = cells_body(columns = vars(parameter),
                                      rows = str_detect(parameter, "YSR")))
 ```
 
