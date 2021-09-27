@@ -7,7 +7,7 @@ output:
 
 TO DO:
 
-* Table of demogrpahics split by gender or anything?
+* Table of demographics split by gender or anything?
 * Choose auxiliary variables for missing data
 * Equivalence testing
 
@@ -21,10 +21,23 @@ library(ggtext)
 set.seed(2021)
 ```
 
+## Analysis parameters
+
+```{r}
+# Which outcomes
+outcomes <- c("psychotic_pq_sum") 
+# Which predictors
+predictors <- c("duration_sleep", "efficiency_sleep", "subj_sleep", "social_jetlag")
+# Scale of predictors for effect size estimation
+scale <- c("cont")
+```
+
 ## Load in data
 
 ```{r}
 tidy_df <- read_csv("sim_data.csv")
+
+tidy_df
 ```
 
 ## Demographics table
@@ -50,8 +63,8 @@ tidy_df %>%
   select(-c(id, psychotic_ysr_sum, pq_1:pq_16, ysr_1:ysr_3, sleep_1:sleep_8)) %>% 
   select(age, sex, ethnicity, mom_educt, mom_depr, psychotic_pq_sum, psychotic_ysr_dicht, everything()) %>% 
   rename_with(~str_replace(., "_", " ") %>% 
-               str_to_title %>% 
                ifelse(str_detect(., "sleep"), paste("Sleep" ,str_remove(., "sleep")), .) %>%
+               str_to_title %>% 
                ifelse(str_detect(., "Mom Educt"), "Mother's Education", .) %>% 
                ifelse(str_detect(., "Mom Depr"), "Mother's Depression (BSI)", .) %>% 
                ifelse(str_detect(., "Subj"), "Self-reported sleep", .) %>% 
@@ -61,7 +74,21 @@ tidy_df %>%
          ## Table summary is treating this var as categorical, added miniscule noise to fix
          `Psychotic symptoms (PQ)` = map_dbl(`Psychotic symptoms (PQ)`, ~. + rnorm(1, 0.0001, sd = 0.001))) %>% 
   
-  tbl_summary(statistic = list(all_continuous() ~ "{mean} ({sd})"))
+  tbl_summary(statistic = list(all_continuous() ~ "{mean} ({sd})")) %>% 
+  as_gt() %>% 
+  tab_header("Table 1. Demographic characteristics of the sample") %>% 
+  opt_table_lines(extent = "none") %>%
+  tab_options(
+      heading.border.bottom.width = 2,
+      heading.border.bottom.style = "solid",
+      table.border.top.color = "white",
+      table_body.border.top.width = 1,
+      heading.title.font.size = 13,
+      table.font.size = 12,
+      table_body.border.bottom.width = 1,
+      table_body.border.bottom.style = "solid",
+      column_labels.border.bottom.style = "solid",
+      column_labels.border.bottom.width = 1) 
 ```
 
 
@@ -87,7 +114,8 @@ tidy_df %>%
             nudge_x = .015, size = 3) +
   scale_x_continuous(labels = scales::percent) +
   tidytext::scale_y_reordered() +
-  labs(x = "Percent missing", y = "Variable") +
+  labs(x = "Percent missing", y = "Variable",
+       title = "Missing data proprotions for each variable") +
   theme_bw() +
   theme(panel.grid = element_blank(),
         legend.position = "none")
@@ -103,7 +131,7 @@ non_response_df <-
   rowwise() %>% 
   mutate(sum_pq = sum(c_across(pq_1_miss:pq_16_miss)),
          sum_sleep = sum(c_across(sleep_1_miss:sleep_8_miss)),
-         sum_actiwatch = sum(c_across(duration_sleep_miss:arousal_sleep_miss))) %>% 
+         sum_actiwatch = sum(c_across(duration_sleep_miss:social_jetlag_miss))) %>% 
   ungroup() %>% 
   select(-ends_with("miss")) %>% 
   # Dichotomize to either missing or not missing
@@ -120,22 +148,40 @@ non_response_df <-
   sum_vars() %>%  
   # Select variables for non-response analysis
   select(age, sex, ethnicity, mom_educt, mom_depr, psychotic_pq_sum, psychotic_ysr_dicht,
-         duration_sleep:arousal_sleep, subj_sleep, which_missing) 
+         duration_sleep:social_jetlag, subj_sleep, which_missing) 
   
 non_response_df %>% 
   mutate(mom_educt = as.character(mom_educt),
          across(where(is.character), ~map_chr(., str_to_sentence)),
-         psychotic_pq_sum = map_dbl(psychotic_pq_sum, ~. + rnorm(1, 0.0001, sd = 0.001))) %>% 
+         psychotic_pq_sum = map_dbl(psychotic_pq_sum, ~. + rnorm(1, 0.0001, sd = 0.001)),
+         which_missing = str_replace(which_missing, "pq", "PQ") %>% 
+                         str_replace("actiwatch", "Actiwatch") %>% 
+                         str_replace("sleep self", "Sleep Self")) %>% 
   rename_with(~str_replace(., "_", " ") %>% 
-               str_to_title %>% 
                ifelse(str_detect(., "sleep"), paste("Sleep" ,str_remove(., "sleep")), .) %>%
+               str_to_title %>% 
                ifelse(str_detect(., "Mom Educt"), "Mother's Education", .) %>% 
                ifelse(str_detect(., "Mom Depr"), "Mother's Depression (BSI)", .) %>% 
                ifelse(str_detect(., "Subj"), "Self-reported sleep", .) %>% 
                ifelse(str_detect(., "Pq_sum"), "Psychotic symptoms (PQ)", .) %>% 
                ifelse(str_detect(., "dicht"), "Psychotic symptoms (YSR)", .)) %>% 
+  
   tbl_summary(by = "Which Missing", missing_text = "-") %>% 
-  add_p()
+  add_p() %>% 
+  as_gt() %>% 
+  tab_header("Table 2. Non-response patterns among predictor and outcome variables") %>% 
+  opt_table_lines(extent = "none") %>%
+  tab_options(
+      heading.border.bottom.width = 2,
+      heading.border.bottom.style = "solid",
+      table.border.top.color = "white",
+      table_body.border.top.width = 1,
+      heading.title.font.size = 13,
+      table.font.size = 12,
+      table_body.border.bottom.width = 1,
+      table_body.border.bottom.style = "solid",
+      column_labels.border.bottom.style = "solid",
+      column_labels.border.bottom.width = 1) 
 
 ```
 ### Impute missing data
@@ -183,7 +229,7 @@ imputed_df <-
   mice_long %>% 
   mutate(subj_sleep = sleep_1 + sleep_2 + sleep_3 + sleep_4 + 
                       sleep_5 + sleep_6 + sleep_7 + sleep_8,
-         subj_sleep_sqrt = sqrt(subj_sleep + 0.0001),
+         subj_sleep_sqrt = sqrt(subj_sleep + 0.000001),
          psychotic_pq_sum = pq_1 + pq_2 + pq_3 + pq_4 + pq_5 + pq_6 + pq_7 + pq_8 +
                   pq_9 + pq_10 + pq_11 + pq_12 + pq_13 + pq_14 + pq_15 + pq_16,
          psychotic_ysr_sum = ysr_1 + ysr_2 + ysr_3,
@@ -227,7 +273,8 @@ dist_df %>%
   
   ggplot(aes(x = value)) +
   geom_histogram(fill = "#37718E") +
-  labs(x = "", y = "") +
+  labs(x = "", y = "",
+       title = "Distributions of all modelled variables") +
   facet_wrap(~name, scales = "free") +
   theme_bw() +
   theme(panel.grid = element_blank(),
@@ -241,10 +288,6 @@ dist_df %>%
 
 ```{r}
 
-## Define outcomes in a vector
-outcomes <- c("duration_sleep", "efficiency_sleep", "arousal_sleep", "social_jetlag",
-              "subj_sleep", "subj_sleep_sqrt")
-
 is_outlier <- function(x) {
   return(x < quantile(x, 0.25) - 1.5 * IQR(x) | x > quantile(x, 0.75) + 1.5 * IQR(x))
 }
@@ -255,16 +298,17 @@ imputed_df %>%
   select(-ethnicity) %>% 
   pivot_longer(all_of(outcomes)) %>% 
   mutate(name = str_replace_all(name, "_", " ") %>% 
-                str_to_title) %>% 
+                str_to_upper) %>% 
   group_by(name) %>% 
   mutate(outlier = ifelse(is_outlier(value), value, NA)) %>% 
   
   ggplot(aes(x = name, y = value)) +
-  geom_boxplot(col = "#37718E") + 
+  geom_boxplot(col = "#37718E", ) + 
   geom_text(aes(label = round(outlier, 1)), nudge_x = .15, na.rm = T,
             size = 2, color = "#37718E") +
   theme_bw() +
-  labs(x = "", y = "") +
+  labs(x = "", y = "",
+       title = "Outliers in the outcome variable(s)") +
   theme(legend.position = "none")
 
 ```
@@ -298,16 +342,17 @@ outliers_df <-
   imputed_df %>% 
   complete(action = "long", include = T) %>% 
   mutate(id_out = 1:n(),
-         subj_sleep_outlier = if_else(id_out %in% pull(unnest(outliers_id$subj_sleep)), 1, 0),
-         duration_sleep_outlier = if_else(id_out %in% pull(unnest(outliers_id$duration_sleep)), 1, 0),
-         efficiency_sleep_outlier = if_else(id_out %in% pull(unnest(outliers_id$efficiency_sleep)), 1, 0),
-         arousal_sleep_outlier = if_else(id_out %in% pull(unnest(outliers_id$arousal_sleep)), 1, 0),
-         social_jetlag_outlier = if_else(id_out %in% pull(unnest(outliers_id$social_jetlag)), 1, 0),
-         outlier_any = if_else((subj_sleep_outlier + duration_sleep_outlier + efficiency_sleep_outlier +
-                               arousal_sleep_outlier + social_jetlag_outlier) >= 1, 1, 0)) %>% 
+         psychotic_pq_sum_outlier = if_else(id_out %in% pull(unnest(outliers_id$psychotic_pq_sum)), 1, 0)) %>% 
+         # subj_sleep_outlier = if_else(id_out %in% pull(unnest(outliers_id$subj_sleep)), 1, 0),
+         # duration_sleep_outlier = if_else(id_out %in% pull(unnest(outliers_id$duration_sleep)), 1, 0),
+         # efficiency_sleep_outlier = if_else(id_out %in% pull(unnest(outliers_id$efficiency_sleep)), 1, 0),
+         # arousal_sleep_outlier = if_else(id_out %in% pull(unnest(outliers_id$arousal_sleep)), 1, 0),
+         # social_jetlag_outlier = if_else(id_out %in% pull(unnest(outliers_id$social_jetlag)), 1, 0),
+         # outlier_any = if_else((subj_sleep_outlier + duration_sleep_outlier +
+                                # efficiency_sleep_outlier + social_jetlag_outlier) >= 1, 1, 0)) %>% 
   # Make sure that if outlier is flagged in one imputatiot, it is identified as such in all others
   group_by(id) %>% 
-  mutate(across(subj_sleep_outlier:social_jetlag_outlier, max))
+  mutate(across(ends_with("outlier"), max))
 
 ```
 
@@ -331,8 +376,8 @@ Returns as output:
 
 ```{r}
 ### TEST FOR FUNCTION ####
-outcome   <- "subj_sleep"
-predictor <- "psychotic_ysr_sum"
+outcome   <- "psychotic_pq_sum"
+predictor <- "social_jetlag"
 predictor_scale <- "cont"
 remove_outlier <- TRUE
 
@@ -485,11 +530,10 @@ tibble(model = list(mod),
 
 ```{r}
 model_coefs_df <-
-  tibble(predictor = c("psychotic_pq_sum", "psychotic_ysr_dicht"),
-         scale = c("cont", "categ")) %>% 
+  tibble(predictor = predictors,
+         scale = scale) %>% 
   expand(nesting(predictor, scale), 
-         outcome = c("subj_sleep", "duration_sleep", "efficiency_sleep",
-                     "arousal_sleep", "social_jetlag")) %>% 
+         outcome = outcomes) %>% 
   mutate(result = pmap(list(outcome, predictor, scale), run_model)) %>% 
   select(-scale) %>% 
   unnest(result)
@@ -519,17 +563,25 @@ model_coefs_df %>%
   transmute(diag = pmap(list(model, outcome, predictor),
                         extract_pred_resids)) %>% 
   unnest(diag) %>%
-  mutate(predictor = if_else(str_detect(predictor, "dicht"), "YSR pred", "PQ pred"),
-         outcome = str_replace(outcome, "_", " ") %>% 
-                   str_to_title) %>% 
+  mutate(across(c(outcome, predictor), ~str_replace_all(., "_", " ") %>% 
+                                        str_to_upper())) %>% 
+         # predictor = if_else(str_detect(predictor, "dicht"), "YSR pred", "PQ pred"),
+         # outcome = str_replace_(outcome, "_", " ") %>% 
+                   # str_to_title) %>% 
 
-  ggplot(aes(x = res, y = predict, color = predictor)) +
-  geom_point(alpha = .7) +
-  geom_smooth(color = "black") +
-  facet_wrap(predictor ~ outcome, scales = "free", nrow = 2) +
-  labs(x = "Residual value", y = "Predicted value") +
+  ggplot(aes(x = res, y = predict)) +
+  geom_point(alpha = .7, shape = 16, color = "#37718E") +
+  geom_smooth(color = "black", method = "lm") +
+  facet_grid(predictor~outcome, scales = "free") +
+  labs(x = "Residual value", y = "Predicted value",
+       title = "Residual distributions of reggresion models",
+       subtitle = "Split by outcomes along the top and predictors along the right") +
   theme_bw() +
-  theme(legend.position = "none")
+  theme(legend.position = "none",
+        strip.text = element_text(size = 6),
+        axis.text = element_text(size = 6),
+        axis.title = element_text(size = 9)
+        )
   
 ```
 
@@ -539,6 +591,12 @@ Convenience function to show rounded results with trailing zeroes
 
 ```{r}
 round_trail <- function(string) sprintf("%.2f", round(string, 2))
+
+combine_ci <- function(lower, upper){
+  paste0("[", round_trail(lower), ", ",
+         round_trail(upper), "]")
+}
+
 ```
 
 ### Adjust p-values using Holm method
@@ -582,60 +640,62 @@ rsqr_df %>%
 coefs_df <-
   adjusted_coeffs %>%  
   left_join(rsqr_df, by = c("predictor", "outcome")) %>% 
-  filter(str_detect(parameter, "psychotic")) %>% 
-  mutate(outcome = str_replace(outcome, "_", " ") %>% 
-                   str_to_title %>% 
-                   if_else(. == "Subj Sleep", "Subjective Sleep", .),
-         analysis =  if_else(str_detect(parameter, "sum"), "Continous", "Dichotomous"),
-         parameter = case_when(str_detect(parameter, "sum") ~ "PQ Psychotic Experience\n(continuous sum total)",
-                               str_detect(parameter, "some") ~ "YSR Psychotic Experience\n(Some symptoms vs. None)",
-                               str_detect(parameter, "several") ~ "YSR Psychotic Experience\n(Several symptoms vs. None)"),
+  filter(str_detect(parameter, "sleep|jetlag")) %>% 
+  mutate(across(c(outcome, parameter), ~str_replace_all(., "_", " ") %>%  
+                                        str_to_upper),
+         # analysis =  if_else(str_detect(parameter, "sum"), "Continous", "Dichotomous"),
+         # parameter = case_when(str_detect(parameter, "sum") ~ "Psychotic Experience\n(continuous sum total)",
+                               # str_detect(parameter, "some") ~ "YSR Psychotic Experience\n(Some symptoms vs. None)",
+                               # str_detect(parameter, "several") ~ "YSR Psychotic Experience\n(Several symptoms vs. None)"),
          ci = paste0("[", round_trail(ci_low), ", ", round_trail(ci_high), "]"),
          rsqr_ci = paste0(round_trail(rsqr), " [",
                           round_trail(rsqr_low), ", ", round_trail(rsqr_upp), "]"))
 
+
 coefs_df %>%   
-  ggplot(aes(x = coefficient, y = parameter, col = analysis)) +
+  ggplot(aes(x = coefficient, y = parameter, col = outcome)) +
   geom_point(shape = 1) +
-  geom_errorbarh(aes(xmin = ci_low, xmax = ci_high), height = 1/3) +
+  geom_errorbarh(aes(xmin = ci_low, xmax = ci_high), height = 1/4) +
   geom_text(aes(label = round_trail(coefficient)),
             nudge_y = .35, size = 2) +
   geom_text(aes(label = ci),
             nudge_y = -.3, size = 2) +
   geom_richtext(aes(label = paste0("R<sup>2</sup> = " ,rsqr_ci),
-                    x = 0, y = 4.5),
+                    x = max(ci_high) + 0.06),
                 color = "black", label.color = NA, fill = NA,
-                data = filter(coefs_df, analysis == "Continous") %>% 
-                       distinct(rsqr_ci, outcome, .keep_all = T),
+                data = distinct(coefs_df, rsqr_ci, parameter, outcome, .keep_all = T),
                 size = 2.5) +
   facet_wrap(~outcome, ncol = 1) +
   scale_color_manual(values = c("#37718E", "#7c7e7f")) +
-  labs(x = "Coefficient estimate", y = "") +
+  expand_limits(x = max(coefs_df$ci_high) + 0.1) +
+  labs(x = "Psychotic experiences coefficient estimate", y = "",
+       title = "Main predictor coefficients from every predictor and outcome model") +
   coord_cartesian(clip = "off") +
   theme_minimal() +
   theme(legend.position = "none", 
         aspect.ratio = .25,
         panel.grid = element_blank(),
+        panel.border = element_rect(colour = "black", fill = NA),
         axis.text = element_text(size = 6),
         axis.title = element_text(size = 7),
-        strip.text = element_text(size = 8))
+        strip.text = element_text(size = 7),
+        title = element_text(size = 10))
 
 ggsave("plots/coeff_plot.png", scale = 2, bg = "white")
 ```
 
-### Coefficient table
-
+### Full coefficient table
 
 ```{r}
 adjusted_coeffs %>% 
-  transmute(model = case_when(str_detect(predictor, "pq") ~ "PQ Psychotic Experience)",
-                               str_detect(predictor, "ysr") ~ "YSR Psychotic Experience"),
-            outcome = str_replace(outcome, "_", " ") %>% 
-                   str_to_title %>% 
+  transmute(# model = case_when(str_detect(predictor, "pq") ~ "PQ Psychotic Experience)",
+                               # str_detect(predictor, "ysr") ~ "YSR Psychotic Experience"),
+            outcome = str_replace_all(outcome, "_", " ") %>% 
+                   str_to_upper %>% 
                    if_else(. == "Subj Sleep", "Subjective Sleep", .),
-            parameter = case_when(str_detect(parameter, "sum") ~ "PQ Psychotic Experience\n(Sum total)",
-                               str_detect(parameter, "some") ~ "YSR Psychotic Experience\n(Some symptoms)",
-                               str_detect(parameter, "several") ~ "YSR Psychotic Experience\n(Several symptoms)",
+            parameter = case_when(str_detect(parameter, "sum") ~ "PQ Psychotic Experience",
+                               # str_detect(parameter, "some") ~ "YSR Psychotic Experience\n(Some symptoms)",
+                               # str_detect(parameter, "several") ~ "YSR Psychotic Experience\n(Several symptoms)",
                                str_detect(parameter, "mom_depr") ~ "Mother's Depression (BSI)",
                                str_detect(parameter, "mom_educthigh") ~ "Mother's Education (High School)",
                                str_detect(parameter, "mom_eductno") ~ "Mother's Education (No Education)",
@@ -646,11 +706,11 @@ adjusted_coeffs %>%
                                TRUE ~ parameter
                                ),
             coefficient = round_trail(coefficient),
-            ci = paste0("[", round_trail(ci_low), ", ", round_trail(ci_high), "]"),
+            ci = combine_ci(ci_low, ci_high),
             p = round(p_adj, 3)) %>% 
   
   
-  gt(groupname_col = "outcome", rowname_col = "model") %>% 
+  gt(groupname_col = "outcome") %>% 
   cols_label(parameter = "Coefficient",
              coefficient = "Estimate",
              ci = "95% CI",
@@ -663,34 +723,54 @@ adjusted_coeffs %>%
                                      rows = str_detect(parameter, "Ethnicity"))) %>% 
   tab_footnote("Reference category for YSR Psychotic Experiences = No symptoms",
                location = cells_body(columns = vars(parameter),
-                                     rows = str_detect(parameter, "YSR")))
+                                     rows = str_detect(parameter, "YSR"))) %>% 
+  opt_table_lines(extent = "none") %>%
+  tab_options(
+    row_group.font.weight = "bold",
+      heading.border.bottom.width = 2,
+      heading.border.bottom.style = "solid",
+      table.border.top.color = "white",
+      table_body.border.top.width = 1,
+      heading.title.font.size = 13,
+      table.font.size = 12,
+      table_body.border.bottom.width = 1,
+      table_body.border.bottom.style = "solid",
+      column_labels.border.bottom.style = "solid",
+      column_labels.border.bottom.width = 1) 
 ```
 
 
-### Effect sizes
+### Main effects table
 
 ```{r}
-
-eff_size_df <-
-  model_coefs_df %>% 
-  select(-model) %>% 
-  unnest(coeff_results) %>% 
-  filter(str_detect(parameter, "psychotic")) %>% 
-  transmute(outcome = str_replace(outcome, "_", " ") %>% 
-                   str_to_title %>% 
-                   if_else(. == "Subj Sleep", "Subjective Sleep", .),
-         parameter = case_when(str_detect(parameter, "sum") ~ "PQ Psychotic Experience\n(continuous sum total)",
-                               str_detect(parameter, "some") ~ "YSR Psychotic Experience\n(Some symptoms vs. None)",
-                               str_detect(parameter, "several") ~ "YSR Psychotic Experience\n(Several symptoms vs. None)"), 
-         eff_size = round_trail(eff_size),
-         eff_ci = paste0("[", round_trail(eff_ci_low), ", ",
-                            round_trail(eff_ci_high), "]"),
-         result = paste(eff_size, eff_ci)
-         ) %>% 
-  select(-eff_size, -eff_ci) %>% 
-  pivot_wider(names_from = outcome, values_from = result)
-  
-gt(eff_size_df, rowname_col = "parameter")
+# tbl_main_effects <-
+  # Format numbers for table
+  coefs_df %>% 
+  transmute(predictor = str_replace_all(predictor, "_", " ") %>% 
+                        str_to_title(.), 
+            coeff     = round_trail(coefficient),
+            coeff_ci  = combine_ci(ci_low, ci_high),
+            p_adj     = sprintf("%.3f", round(p, 3)),
+            eff_size  = round_trail(eff_size),
+            eff_ci    = combine_ci(eff_ci_low, eff_ci_high),
+            rsqr      = round_trail(rsqr),
+            rsqr_ci   = combine_ci(rsqr_low, rsqr_upp)) %>% 
+  # Construct table
+  gt(rowname_col = "predictor") %>% 
+  cols_label(coeff    = paste("Unstadardized", greekLetters::greeks("beta")),
+             coeff_ci = "95% CI",
+             p_adj    = "p-value",
+             eff_size = "Pearson's r",
+             eff_ci   = "95% CI",
+             rsqr     = html("R<sup>2</sup>"),
+             rsqr_ci  = "95% CI") %>% 
+  tab_header(title = html("Table 3. Coefficient estimates and effect sizes of sleep predictors for each outcome and model fit (R<sup>2</sup>) for each full model")) %>% 
+  tab_footnote("All estimates adjusted for sex, age, ethnicity, mother's education and mother's depression",
+               location = cells_column_labels(coeff)) %>% 
+  tab_footnote("Displayed p-values are adjusted via Holm's method", 
+               locations = cells_column_labels(p_adj)) %>% 
+  tab_footnote("Effect sizes calculated using partial r adjusted for confounders", 
+               locations = cells_column_labels(eff_size))
 ```
 
 ## Sensitivity analyses
