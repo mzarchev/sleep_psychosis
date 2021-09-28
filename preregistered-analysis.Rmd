@@ -997,3 +997,135 @@ bind_rows(
       column_labels.border.bottom.width = 1) 
 ```
 
+# Exploratory interaction analyses
+
+### Convenience functions
+
+For plotting interaction effects
+
+```{r}
+# Cut into mean plus minus a standard deviation
+mean_sd_cat <- function(vector){
+
+mean     <- mean(vector, na.rm = T)
+plus_sd  <- mean + sd(vector, na.rm = T)
+minus_sd <- mean - sd(vector, na.rm = T)
+
+c(mean, plus_sd, minus_sd)
+}
+
+# Use the +- 1SD range of a vector
+min_to_max <- function(vector, length = 5){
+  seq(from = mean(vector, na.rm = T) - sd(vector, na.rm = T),
+      to   = mean(vector, na.rm = T) + sd(vector, na.rm = T),
+      length.out = length)
+}
+
+format_lab <- function(string){
+  str_replace_all(string, "_", " ") %>% 
+  str_to_title() %>% 
+  str_replace_all("Ctq", "CTQ") 
+}
+```
+
+
+```{r}
+predictor <- "social_jetlag"
+interaction <- "ctq_physical_abuse"
+
+fit_interaction_model <- function(predictor, interaction){
+
+# Fit interaction model
+interaction_fit <-
+  lm.mids(paste("psychotic_pq_sum ~", predictor, "*", interaction,
+                "+ age + sex + ethnicity + recent_ale"),
+          data = imputed_df)
+
+# Extract coefficients
+coeff_df <-
+  parameters::parameters(interaction_fit) %>% 
+  as_tibble() %>% 
+  janitor::clean_names() %>% 
+  filter(parameter != "(Intercept)") %>% 
+  select(parameter, coefficient, ci_low, ci_high, p)
+
+# Get values for predictor (mean ± 1SD)
+predictor_levels <-
+  imputed_df %>% 
+  complete() %>% 
+  pull(predictor) %>% 
+  mean_sd_cat()
+
+# Get values for interaction (10 values ranging from -1SD to +1SD)
+interaction_range <-
+  imputed_df %>% 
+  complete() %>% 
+  pull(predictor) %>%
+  ggeffects::pretty_range(n = 2)
+
+# Store values in list
+interaction_values <- list(predictor_levels, interaction_range)
+names(interaction_values) <- c(predictor, interaction)
+
+# Plot
+plot <-
+  emmeans::emmip(interaction_fit, as.formula(paste(predictor,"~" ,interaction)),
+      at = interaction_values, CIs = T) +
+  theme_minimal() +
+  scale_x_continuous(breaks = interaction_range) +
+  scale_y_continuous() +
+  scale_color_manual(values = c("#37718E", "#FF6542", "#5FAD56"),
+                     labels = ~round_trail(as.numeric(.))) +
+  labs(x = format_lab(interaction), y = "",
+       color = paste(format_lab(predictor))) +
+  theme(legend.position = "top",
+        aspect.ratio = 1)
+
+result <-
+  tibble(coeffs = list(coeff_df),
+         plot   = list(plot))
+
+return(result)
+}
+```
+
+### Fit models
+
+```{r}
+interaction_fits <-
+  tibble(interaction = c("ctq_emotional_abuse", "ctq_physical_abuse", "ctq_sexual_abuse")) %>% 
+  expand(nesting(interaction), predictors) %>% 
+  mutate(result = map2(predictors, interaction, ~fit_interaction_model(predictor = .x,
+                                                                       interaction = .y))) %>% 
+  unnest(result) %>% 
+  arrange(predictors)
+```
+
+### Assemble interaction plot
+
+```{r fig.height=10, fig.width=7}
+duration_plot <-
+  (interaction_fits$plot[[1]] + theme(legend.position = "none")) +
+   interaction_fits$plot[[2]] +
+  (interaction_fits$plot[[3]] + theme(legend.position = "none"))
+
+efficiency_plot <-
+  (interaction_fits$plot[[4]] + theme(legend.position = "none")) +
+   interaction_fits$plot[[5]] +
+  (interaction_fits$plot[[6]] + theme(legend.position = "none"))
+
+jetlag_plot <-
+  (interaction_fits$plot[[7]] + theme(legend.position = "none")) +
+   interaction_fits$plot[[8]] +
+  (interaction_fits$plot[[9]] + theme(legend.position = "none"))
+
+subjective_plot <-
+  (interaction_fits$plot[[10]] + theme(legend.position = "none")) +
+   interaction_fits$plot[[11]] +
+  (interaction_fits$plot[[12]] + theme(legend.position = "none"))
+
+(duration_plot/efficiency_plot/jetlag_plot/subjective_plot) 
+  # plot_annotation(title = "Interaction between CTQ abuse subscales and sleep predictors",
+                  # theme = theme(plot.title = element_text(hjust = 0.8)))
+```
+
