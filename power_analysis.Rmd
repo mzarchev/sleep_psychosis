@@ -13,8 +13,6 @@ library(WebPower)
 ```{r}
 wp.correlation(n = 640, r = NULL, power = .8, alpha = 0.0125, p = 4)
 
-seq(440, 640, 20)
-
 ```
 ### Minimum effect size detectable with a partial sample (25% missing)
 
@@ -48,13 +46,23 @@ power_df %>%
             color = "midnightblue") +
   geom_tile(data = power_df %>% filter(power >= 0.7 & power < 0.8),
             color = "gray") +
-  labs(x = "Pearson's (partial) r", y = "Sample size", fill = "Power\n") +
+  labs(x = "Pearson's (partial) r", y = "Sample size", fill = "Power\n",
+       title = "Power curve for detecting Pearon's r with four confounders",
+       subtitle = "Blue outlines indicate points with 80% power, gray with 70% power") +
+  scale_x_continuous(limits = c(.09, .21),
+                     expand = c(0, 0),
+                     breaks = seq(.1, .2, by = 0.02)
+                     ) +
+  scale_y_continuous(limits = c(420, 660),
+                     expand = c(0, 0),
+                     breaks = seq(440, 640, by = 40)) +
   scale_fill_continuous(breaks = seq(0.2, 1, 0.2),
                         limits = c(0.2, 1),
                         labels = scales::percent) +
   theme_light() +
   theme(panel.grid = element_blank(),
-        aspect.ratio = .75)
+        aspect.ratio = .75,
+        panel.border = element_blank())
 
 ggsave("plots/power_analysis.png", scale = 2)
 ```
